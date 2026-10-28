@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  schedule:
+    - cron: "0 12 * * 2" # Tuesdays, after Dependabot's Monday run
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version bump
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+
+env:
+  BUMP: ${{ inputs.bump || 'auto' }}
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install stable Rust
+        run: rustup update stable && rustup default stable
+      - name: Check out the last release
+        run: git worktree add "$RUNNER_TEMP/last" "$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
+      - name: Plan release
+        id: plan
+        run: cargo run --locked -q --manifest-path generator/Cargo.toml -- release "$BUMP" "$RUNNER_TEMP/last/typst-codex"
+
+  publish:
+    needs: plan
+    if: needs.plan.outputs.version != ''
+    runs-on: ubuntu-latest
+    # The `release` environment requires your approval. Review the plan job's summary first.
+    environment: release
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      HUB_FORK: ${{ vars.HUB_FORK }}
+      BRANCH: typst-codex-v${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Install stable Rust
+        run: rustup update stable && rustup default stable
+      - name: Check out the last release
+        run: git worktree add "$RUNNER_TEMP/last" "$(git tag --list 'v*' --sort=-v:refname | head -n 1)"
+
+      - name: Push release branch, tag and GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cargo run --locked -q --manifest-path generator/Cargo.toml -- release "$BUMP" "$RUNNER_TEMP/last/typst-codex"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C release
+          git add typst-codex/
+          git commit -m "Release typst-codex v$VERSION"
+          git tag "v$VERSION"
+          git push --force origin release "v$VERSION"
+          gh release create "v$VERSION" --title "typst-codex v$VERSION" --notes-file "$GITHUB_STEP_SUMMARY"
+
+      - name: Sync Hub fork with espanso/hub
+        if: vars.HUB_AUTOMATION == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.HUB_TOKEN }}
+        run: gh repo sync "$HUB_FORK" --source espanso/hub --branch main
+      - uses: actions/checkout@v7
+        if: vars.HUB_AUTOMATION == 'true'
+        with:
+          repository: ${{ vars.HUB_FORK }}
+          token: ${{ secrets.HUB_TOKEN }}
+          path: hub
+      - name: Open PR to espanso/hub
+        if: vars.HUB_AUTOMATION == 'true'
+        working-directory: hub
+        env:
+          GH_TOKEN: ${{ secrets.HUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          mkdir -p "packages/typst-codex/$VERSION"
+          cp ../typst-codex/{_manifest.yml,package.yml,README.md} "packages/typst-codex/$VERSION/"
+          git add packages/typst-codex
+          git commit -m "Update typst-codex to v$VERSION"
+          git push --force origin "$BRANCH"
+          gh pr create --repo espanso/hub --base main --head "${HUB_FORK%%/*}:$BRANCH" \
+            --title "Update typst-codex to v$VERSION" \
+            --body "Update \`typst-codex\` to v$VERSION. Changes: https://github.com/$GITHUB_REPOSITORY/releases/tag/v$VERSION"

@@ -1,0 +1,7 @@
+name: typst-codex
+title: Typst Codex
+description: Typst symbol names as Espanso triggers. Symbols from codex 0.3.0.
+version: 0.1.0
+author: munr0
+homepage: "https://github.com/munr0/espanso-typst-codex"
+tags: ["typst", "math", "symbols", "unicode", "emoji"]

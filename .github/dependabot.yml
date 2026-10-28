@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # Monday, so merged updates are in place for release.yml's Tuesday run.
+  - package-ecosystem: cargo
+    directory: /generator
+    schedule:
+      interval: weekly
+      day: monday
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
